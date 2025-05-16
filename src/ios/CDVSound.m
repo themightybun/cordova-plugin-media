@@ -18,6 +18,8 @@
 #import "CDVSound.h"
 #import "CDVFile.h"
 #import <AVFoundation/AVFoundation.h>
+#import <MediaPlayer/MediaPlayer.h>
+#import <UIKit/UIKit.h>
 #include <math.h>
 
 #define DOCUMENTS_SCHEME_PREFIX @"documents://"
@@ -28,14 +30,14 @@
 
 @implementation CDVSound
 
-BOOL keepAvAudioSessionAlwaysActive = NO;
+BOOL keepAvAudioSessionAlwaysActive = YES;
 
 @synthesize soundCache, avSession, currMediaId, statusCallbackId;
 
--(void) pluginInitialize
+/*-(void) pluginInitialize
 {
     NSDictionary* settings = self.commandDelegate.settings;
-    keepAvAudioSessionAlwaysActive = [[settings objectForKey:[@"KeepAVAudioSessionAlwaysActive" lowercaseString]] boolValue];
+    //keepAvAudioSessionAlwaysActive = [[settings objectForKey:[@"KeepAVAudioSessionAlwaysActive" lowercaseString]] boolValue];
     if (keepAvAudioSessionAlwaysActive) {
         if ([self hasAudioSession]) {
             NSError* error = nil;
@@ -44,7 +46,106 @@ BOOL keepAvAudioSessionAlwaysActive = NO;
             }
         }
     }
+}*/
+-(void) pluginInitialize
+{
+    NSDictionary* settings = self.commandDelegate.settings;
+    // Force the flag on
+    keepAvAudioSessionAlwaysActive = YES;
+    NSLog(@"KeepAVAudioSessionAlwaysActive = %d", keepAvAudioSessionAlwaysActive);
+
+    if ([self hasAudioSession]) {
+        NSError* err = nil;
+
+        // 1️⃣  Category: PlayAndRecord so AllowAirPlay is legal
+        AVAudioSessionCategoryOptions opts = AVAudioSessionCategoryOptionAllowAirPlay;
+        if (@available(iOS 10.0, *)) {
+            [self.avSession setCategory:AVAudioSessionCategoryPlayback
+                                 mode:AVAudioSessionModeDefault
+                              options:opts
+                                error:&err];
+        } else {
+            [self.avSession setCategory:AVAudioSessionCategoryPlayback
+                            withOptions:opts
+                                  error:&err];
+        }
+        if (err) {
+            NSLog(@"[pluginInitialize] setCategory error: %@", err);
+        }
+
+        // 2️⃣  Clear any forced‐to‐speaker override
+        [self.avSession overrideOutputAudioPort:AVAudioSessionPortOverrideNone
+                                         error:&err];
+        if (err) {
+            NSLog(@"[pluginInitialize] overrideOutputAudioPort error: %@", err);
+        }
+
+        // 3️⃣  Activate the session once and keep it
+        if (![self.avSession setActive:YES error:&err]) {
+            NSLog(@"[pluginInitialize] setActive error: %@", err);
+        }
+        // 1️⃣ Tell the OS you want to receive remote-control events
+        [[UIApplication sharedApplication] beginReceivingRemoteControlEvents];
+
+        // 2️⃣ Wire up the Play/Pause commands to your handlers
+        MPRemoteCommandCenter *center = [MPRemoteCommandCenter sharedCommandCenter];
+
+        // Enable and register Play
+        center.playCommand.enabled = YES;
+        [center.playCommand addTarget:self
+                              action:@selector(onRemotePlay:)];
+
+        // Enable and register Pause
+        center.pauseCommand.enabled = YES;
+        [center.pauseCommand addTarget:self
+                              action:@selector(onRemotePause:)];
+
+        NSLog(@"🔊 Remote command center hook installed");
+    }
 }
+- (MPRemoteCommandHandlerStatus)onRemotePlay:(MPRemoteCommandEvent*)event {
+  NSLog(@"onRemotePlay");
+    if (avPlayer) {
+        NSLog(@"onRemotePlay has player: %@", avPlayer);
+        //[avPlayer play];
+        [self playingAudio:nil];
+        [self updateNowPlayingInfo];
+        return MPRemoteCommandHandlerStatusSuccess;
+    }
+    return MPRemoteCommandHandlerStatusCommandFailed;
+}
+
+- (MPRemoteCommandHandlerStatus)onRemotePause:(MPRemoteCommandEvent*)event {
+  NSLog(@"onRemotePause");
+    if (avPlayer) {
+        NSLog(@"onRemotePause has player: %@", avPlayer);
+        //[avPlayer pause];
+        [self pausePlayingAudio:nil];
+        [self updateNowPlayingInfo];
+        return MPRemoteCommandHandlerStatusSuccess;
+    }
+    return MPRemoteCommandHandlerStatusCommandFailed;
+}
+- (void)updateNowPlayingInfo
+{
+    AVPlayerItem *item = avPlayer.currentItem;
+    if (! item) { return; }
+
+    CMTime dur = item.asset.duration;
+    NSTimeInterval duration = CMTimeGetSeconds(dur);
+    NSTimeInterval elapsed  = CMTimeGetSeconds(avPlayer.currentTime);
+
+    NSMutableDictionary *info = [NSMutableDictionary dictionary];
+    info[MPMediaItemPropertyTitle]                  = @"My Audio";           // or extract from URL
+    info[MPMediaItemPropertyPlaybackDuration]       = @(duration);
+    info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = @(elapsed);
+    info[MPNowPlayingInfoPropertyPlaybackRate]      = @(avPlayer.rate);
+
+    NSLog(@"NowPlayingInfo: %@", info);
+    // Set the now playing info
+    [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo = info;
+}
+
 
 // Maps a url for a resource path for recording
 - (NSURL*)urlForRecording:(NSString*)resourcePath
@@ -424,7 +525,7 @@ BOOL keepAvAudioSessionAlwaysActive = NO;
 
             // audioFile.player != nil  or player was successfully created
             // get the audioSession and set the category to allow Playing when device is locked or ring/silent switch engaged
-            if ([self hasAudioSession]) {
+            /*if ([self hasAudioSession]) {
                 NSError* __autoreleasing err = nil;
                 NSNumber* playAudioWhenScreenIsLocked = [options objectForKey:@"playAudioWhenScreenIsLocked"];
                 BOOL bPlayAudioWhenScreenIsLocked = YES;
@@ -439,7 +540,7 @@ BOOL keepAvAudioSessionAlwaysActive = NO;
                     NSLog(@"Unable to play audio: %@", [err localizedFailureReason]);
                     bError = YES;
                 }
-            }
+            }*/
             if (!bError) {
                 NSLog(@"Playing audio sample '%@'", audioFile.resourcePath);
                 double duration = 0;
@@ -447,17 +548,23 @@ BOOL keepAvAudioSessionAlwaysActive = NO;
                     CMTime time = avPlayer.currentItem.asset.duration;
                     duration = CMTimeGetSeconds(time);
                     if (isnan(duration)) {
-                        NSLog(@"Duration is infinite, setting it to -1");
+                        NSLog(@"Duration is infifnite, setting it to -1");
                         duration = -1;
                     }
 
                     if (audioFile.rate != nil){
                         float customRate = [audioFile.rate floatValue];
                         NSLog(@"Playing stream with AVPlayer & custom rate");
+                        avPlayer.allowsExternalPlayback = YES;
+                        avPlayer.usesExternalPlaybackWhileExternalScreenIsActive = YES;
                         [avPlayer setRate:customRate];
+                        [self updateNowPlayingInfo];
                     } else {
                         NSLog(@"Playing stream with AVPlayer & default rate");
+                        avPlayer.allowsExternalPlayback = YES;
+                        avPlayer.usesExternalPlaybackWhileExternalScreenIsActive = YES;
                         [avPlayer play];
+                        [self updateNowPlayingInfo];
                     }
 
                 } else {
@@ -654,9 +761,13 @@ BOOL keepAvAudioSessionAlwaysActive = NO;
                   toleranceAfter: kCMTimeZero
                completionHandler: ^(BOOL finished) {
                    if (isPlaying) {
+                        NSLog(@"Resuming playback after seeking");
+                        avPlayer.allowsExternalPlayback = YES;
+                        avPlayer.usesExternalPlaybackWhileExternalScreenIsActive = YES;
                        [avPlayer play];
                        // [avPlayer play] sets the rate to 1, so we need to set it again after seeking
                        [avPlayer setRate:currentPlaybackRate];
+                       [self updateNowPlayingInfo];
                    };
                }];
         } else {
