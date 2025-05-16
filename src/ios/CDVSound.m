@@ -108,7 +108,7 @@ BOOL keepAvAudioSessionAlwaysActive = YES;
     if (avPlayer) {
         NSLog(@"onRemotePlay has player: %@", avPlayer);
         //[avPlayer play];
-        [self playingAudio:nil];
+        [self startPlayingAudio:nil];
         [self updateNowPlayingInfo];
         return MPRemoteCommandHandlerStatusSuccess;
     }
