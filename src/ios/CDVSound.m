@@ -104,10 +104,10 @@ BOOL keepAvAudioSessionAlwaysActive = YES;
     }
 }
 - (MPRemoteCommandHandlerStatus)onRemotePlay:(MPRemoteCommandEvent*)event {
-  NSLog(@"onRemotePlay");
     if (avPlayer) {
-        NSLog(@"onRemotePlay has player: %@", avPlayer);
+        NSLog(@"remote play");
         [avPlayer play];
+        [self onStatus:MEDIA_STATE mediaId:self.currMediaId param:@(MEDIA_RUNNING)];
         [self updateNowPlayingInfo];
         return MPRemoteCommandHandlerStatusSuccess;
     }
@@ -115,10 +115,10 @@ BOOL keepAvAudioSessionAlwaysActive = YES;
 }
 
 - (MPRemoteCommandHandlerStatus)onRemotePause:(MPRemoteCommandEvent*)event {
-  NSLog(@"onRemotePause");
     if (avPlayer) {
-        NSLog(@"onRemotePause has player: %@", avPlayer);
+        NSLog(@"remote pause");
         [avPlayer pause];
+        [self onStatus:MEDIA_STATE mediaId:self.currMediaId param:@(MEDIA_PAUSED)];
         [self updateNowPlayingInfo];
         return MPRemoteCommandHandlerStatusSuccess;
     }
@@ -133,15 +133,59 @@ BOOL keepAvAudioSessionAlwaysActive = YES;
     NSTimeInterval duration = CMTimeGetSeconds(dur);
     NSTimeInterval elapsed  = CMTimeGetSeconds(avPlayer.currentTime);
 
+    CDVAudioFile* audioFile = [self.soundCache objectForKey:self.currMediaId];
+    NSDictionary* meta = audioFile.metadata;
+
     NSMutableDictionary *info = [NSMutableDictionary dictionary];
-    info[MPMediaItemPropertyTitle]                  = @"My Audio";           // or extract from URL
+    info[MPMediaItemPropertyTitle]                  = meta[@"title"];
+    info[MPMediaItemPropertyArtist]                 = meta[@"artist"];
     info[MPMediaItemPropertyPlaybackDuration]       = @(duration);
     info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = @(elapsed);
     info[MPNowPlayingInfoPropertyPlaybackRate]      = @(avPlayer.rate);
 
+    // Artwork: if the JS passed a bundle-image name
+    NSString *iconName = meta[@"artwork"];
+    if (iconName) {
+        UIImage *img = [UIImage imageNamed:iconName];
+        if (img) {
+            MPMediaItemArtwork *artwork;
+            if (@available(iOS 10.0, *)) {
+                artwork = [[MPMediaItemArtwork alloc] initWithBoundsSize:img.size
+                                  requestHandler:^UIImage *(CGSize size) { return img; }];
+            } else {
+                artwork = [[MPMediaItemArtwork alloc] initWithImage:img];
+            }
+            info[MPMediaItemPropertyArtwork] = artwork;
+        }
+    }
+
     NSLog(@"NowPlayingInfo: %@", info);
-    // Set the now playing info
-    [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo = info;
+    // Push it on the main thread
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo = info;
+    });
+}
+
+- (void)setMetadata:(CDVInvokedUrlCommand*)command {
+    NSString* mediaId     = [command argumentAtIndex:0];
+    NSDictionary* meta    = [command argumentAtIndex:1];
+
+    CDVAudioFile* audioFile = [self.soundCache objectForKey:mediaId];
+    if (! audioFile) {
+        [self.commandDelegate sendPluginResult:
+           [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR
+                              messageAsString:@"Media ID not found"]
+         callbackId:command.callbackId];
+        return;
+    }
+
+    // Store the metadata and refresh the now-playing panel
+    audioFile.metadata = meta;
+    [self updateNowPlayingInfo];  
+
+    [self.commandDelegate sendPluginResult:
+       [CDVPluginResult resultWithStatus:CDVCommandStatus_OK]
+     callbackId:command.callbackId];
 }
 
 
@@ -591,6 +635,7 @@ BOOL keepAvAudioSessionAlwaysActive = YES;
                 }
 
                 [self onStatus:MEDIA_DURATION mediaId:mediaId param:@(duration)];
+                [self updateNowPlayingInfo]; 
                 [self onStatus:MEDIA_STATE mediaId:mediaId param:@(MEDIA_RUNNING)];
             }
         }
@@ -713,7 +758,7 @@ BOOL keepAvAudioSessionAlwaysActive = YES;
         } else if (avPlayer != nil) {
             [avPlayer pause];
         }
-
+        [self updateNowPlayingInfo]; 
         [self onStatus:MEDIA_STATE mediaId:mediaId param:@(MEDIA_PAUSED)];
     }
 }
