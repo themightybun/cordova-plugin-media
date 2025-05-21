@@ -77,6 +77,7 @@ typedef NSUInteger CDVMediaMsg;
 @property (nonatomic, strong) CDVAudioPlayer* player;
 @property (nonatomic, strong) NSNumber* volume;
 @property (nonatomic, strong) NSNumber* rate;
+@property (nonatomic, strong) NSDictionary* metadata;
 
 @property (nonatomic, strong) CDVAudioRecorder* recorder;
 
@@ -103,6 +104,7 @@ typedef NSUInteger CDVMediaMsg;
 - (void)getCurrentPositionAudio:(CDVInvokedUrlCommand*)command;
 - (void)resumeRecordingAudio:(CDVInvokedUrlCommand*)command;
 - (void)pauseRecordingAudio:(CDVInvokedUrlCommand*)command;
+- (void)setMetadata:(CDVInvokedUrlCommand*)command;
 
 - (BOOL)hasAudioSession;
 
