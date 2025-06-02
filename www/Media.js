@@ -84,6 +84,16 @@ Media.prototype.play = function (options) {
 };
 
 /**
+ * set metadata for the audio file.
+ */
+Media.prototype.setMetadata = function(metadata, success, error) {
+  // this.id is the internal mediaId
+  exec(success || function(){}, error || function(){},
+       'Media',     // the native service name
+       'setMetadata', 
+       [this.id, metadata]);
+};
+/**
  * Stop playing audio file.
  */
 Media.prototype.stop = function () {
